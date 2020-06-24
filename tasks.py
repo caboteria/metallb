@@ -60,10 +60,10 @@ def _make_build_dirs():
       help={
           "binaries": "binaries to build. One or more of {}, or 'all'".format(", ".join(sorted(all_binaries))),
           "architectures": "architectures to build. One or more of {}, or 'all'".format(", ".join(sorted(all_architectures))),
-          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'dev'.",
+          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'minimalpoc'.",
           "docker-user": "docker user under which to tag the images. Default 'metallb'.",
       })
-def build(ctx, binaries, architectures, tag="dev", docker_user="metallb"):
+def build(ctx, binaries, architectures, tag="minimalpoc", docker_user="metallb"):
     """Build MetalLB docker images."""
     binaries = _check_binaries(binaries)
     architectures = _check_architectures(architectures)
@@ -104,10 +104,10 @@ def build(ctx, binaries, architectures, tag="dev", docker_user="metallb"):
       help={
           "binaries": "binaries to build. One or more of {}, or 'all'".format(", ".join(sorted(all_binaries))),
           "architectures": "architectures to build. One or more of {}, or 'all'".format(", ".join(sorted(all_architectures))),
-          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'dev'.",
+          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'minimalpoc'.",
           "docker-user": "docker user under which to tag the images. Default 'metallb'.",
       })
-def push(ctx, binaries, architectures, tag="dev", docker_user="metallb"):
+def push(ctx, binaries, architectures, tag="minimalpoc", docker_user="metallb"):
     """Build and push docker images to registry."""
     binaries = _check_binaries(binaries)
     architectures = _check_architectures(architectures)
@@ -125,10 +125,10 @@ def push(ctx, binaries, architectures, tag="dev", docker_user="metallb"):
 @task(iterable=["binaries"],
       help={
           "binaries": "binaries to build. One or more of {}, or 'all'".format(", ".join(sorted(all_binaries))),
-          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'dev'.",
+          "tag": "docker image tag prefix to use. Actual tag will be <tag>-<arch>. Default 'minimalpoc'.",
           "docker-user": "docker user under which to tag the images. Default 'metallb'.",
       })
-def push_multiarch(ctx, binaries, tag="dev", docker_user="metallb"):
+def push_multiarch(ctx, binaries, tag="minimalpoc", docker_user="metallb"):
     """Build and push multi-architecture docker images to registry."""
     binaries = _check_binaries(binaries)
     architectures = _check_architectures(["all"])

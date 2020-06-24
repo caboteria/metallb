@@ -368,8 +368,7 @@ spec:
       containers:
       - args:
         - --port=7472
-        - --config=config
-        image: metallb/controller:main
+        image: caboteria/controller:minimalpoc-amd64
         imagePullPolicy: Always
         name: controller
         ports:
