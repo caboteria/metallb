@@ -3,15 +3,11 @@ package k8s // import "go.universe.tf/metallb/internal/k8s"
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-
-	"go.universe.tf/metallb/internal/config"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -33,19 +29,10 @@ type Client struct {
 
 	svcIndexer   cache.Indexer
 	svcInformer  cache.Controller
-	epIndexer    cache.Indexer
-	epInformer   cache.Controller
-	cmIndexer    cache.Indexer
-	cmInformer   cache.Controller
-	nodeIndexer  cache.Indexer
-	nodeInformer cache.Controller
 
 	syncFuncs []cache.InformerSynced
 
 	serviceChanged func(log.Logger, string, *v1.Service, *v1.Endpoints) SyncState
-	configChanged  func(log.Logger, *config.Config) SyncState
-	nodeChanged    func(log.Logger, *v1.Node) SyncState
-	synced         func(log.Logger)
 }
 
 // SyncState is the result of calling synchronization callbacks.
@@ -70,19 +57,12 @@ type Config struct {
 	NodeName      string
 	MetricsHost   string
 	MetricsPort   int
-	ReadEndpoints bool
 	Logger        log.Logger
 
 	ServiceChanged func(log.Logger, string, *v1.Service, *v1.Endpoints) SyncState
-	ConfigChanged  func(log.Logger, *config.Config) SyncState
-	NodeChanged    func(log.Logger, *v1.Node) SyncState
-	Synced         func(log.Logger)
 }
 
 type svcKey string
-type cmKey string
-type nodeKey string
-type synced string
 
 // New connects to masterAddr, using kubeconfig to authenticate.
 //
@@ -97,12 +77,6 @@ func New(cfg *Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating Kubernetes client: %s", err)
 	}
-
-	bs, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		return nil, fmt.Errorf("getting namespace from pod service account data: %s", err)
-	}
-	namespace := string(bs)
 
 	broadcaster := record.NewBroadcaster()
 	broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: v1core.New(clientset.CoreV1().RESTClient()).Events("")})
@@ -143,93 +117,6 @@ func New(cfg *Config) (*Client, error) {
 
 		c.serviceChanged = cfg.ServiceChanged
 		c.syncFuncs = append(c.syncFuncs, c.svcInformer.HasSynced)
-
-		if cfg.ReadEndpoints {
-			epHandlers := cache.ResourceEventHandlerFuncs{
-				AddFunc: func(obj interface{}) {
-					key, err := cache.MetaNamespaceKeyFunc(obj)
-					if err == nil {
-						c.queue.Add(svcKey(key))
-					}
-				},
-				UpdateFunc: func(old interface{}, new interface{}) {
-					key, err := cache.MetaNamespaceKeyFunc(new)
-					if err == nil {
-						c.queue.Add(svcKey(key))
-					}
-				},
-				DeleteFunc: func(obj interface{}) {
-					key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-					if err == nil {
-						c.queue.Add(svcKey(key))
-					}
-				},
-			}
-			epWatcher := cache.NewListWatchFromClient(c.client.CoreV1().RESTClient(), "endpoints", v1.NamespaceAll, fields.Everything())
-			c.epIndexer, c.epInformer = cache.NewIndexerInformer(epWatcher, &v1.Endpoints{}, 0, epHandlers, cache.Indexers{})
-
-			c.syncFuncs = append(c.syncFuncs, c.epInformer.HasSynced)
-		}
-	}
-
-	if cfg.ConfigChanged != nil {
-		cmHandlers := cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				key, err := cache.MetaNamespaceKeyFunc(obj)
-				if err == nil {
-					c.queue.Add(cmKey(key))
-				}
-			},
-			UpdateFunc: func(old interface{}, new interface{}) {
-				key, err := cache.MetaNamespaceKeyFunc(new)
-				if err == nil {
-					c.queue.Add(cmKey(key))
-				}
-			},
-			DeleteFunc: func(obj interface{}) {
-				key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-				if err == nil {
-					c.queue.Add(cmKey(key))
-				}
-			},
-		}
-		cmWatcher := cache.NewListWatchFromClient(c.client.CoreV1().RESTClient(), "configmaps", namespace, fields.OneTermEqualSelector("metadata.name", cfg.ConfigMapName))
-		c.cmIndexer, c.cmInformer = cache.NewIndexerInformer(cmWatcher, &v1.ConfigMap{}, 0, cmHandlers, cache.Indexers{})
-
-		c.configChanged = cfg.ConfigChanged
-		c.syncFuncs = append(c.syncFuncs, c.cmInformer.HasSynced)
-	}
-
-	if cfg.NodeChanged != nil {
-		handlers := cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				key, err := cache.MetaNamespaceKeyFunc(obj)
-				if err == nil {
-					c.queue.Add(nodeKey(key))
-				}
-			},
-			UpdateFunc: func(old interface{}, new interface{}) {
-				key, err := cache.MetaNamespaceKeyFunc(new)
-				if err == nil {
-					c.queue.Add(nodeKey(key))
-				}
-			},
-			DeleteFunc: func(obj interface{}) {
-				key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-				if err == nil {
-					c.queue.Add(nodeKey(key))
-				}
-			},
-		}
-		watcher := cache.NewListWatchFromClient(c.client.CoreV1().RESTClient(), "nodes", v1.NamespaceAll, fields.OneTermEqualSelector("metadata.name", cfg.NodeName))
-		c.nodeIndexer, c.nodeInformer = cache.NewIndexerInformer(watcher, &v1.Node{}, 0, handlers, cache.Indexers{})
-
-		c.nodeChanged = cfg.NodeChanged
-		c.syncFuncs = append(c.syncFuncs, c.nodeInformer.HasSynced)
-	}
-
-	if cfg.Synced != nil {
-		c.synced = cfg.Synced
 	}
 
 	http.Handle("/metrics", promhttp.Handler())
@@ -240,40 +127,16 @@ func New(cfg *Config) (*Client, error) {
 	return c, nil
 }
 
-// GetPodsIPs get the IPs from all the pods matched by the labels string
-func (c *Client) GetPodsIPs(namespace, labels string) ([]string, error) {
-	pl, err := c.client.CoreV1().Pods(namespace).List(metav1.ListOptions{LabelSelector: labels})
-	if err != nil {
-		return nil, err
-	}
-	iplist := []string{}
-	for _, pod := range pl.Items {
-		iplist = append(iplist, pod.Status.PodIP)
-	}
-	return iplist, nil
-}
-
 // Run watches for events on the Kubernetes cluster, and dispatches
 // calls to the Controller.
 func (c *Client) Run(stopCh <-chan struct{}) error {
 	if c.svcInformer != nil {
 		go c.svcInformer.Run(stopCh)
 	}
-	if c.epInformer != nil {
-		go c.epInformer.Run(stopCh)
-	}
-	if c.cmInformer != nil {
-		go c.cmInformer.Run(stopCh)
-	}
-	if c.nodeInformer != nil {
-		go c.nodeInformer.Run(stopCh)
-	}
 
 	if !cache.WaitForCacheSync(stopCh, c.syncFuncs...) {
 		return errors.New("timed out waiting for cache sync")
 	}
-
-	c.queue.Add(synced(""))
 
 	if stopCh != nil {
 		go func() {
@@ -311,13 +174,6 @@ func (c *Client) ForceSync() {
 	}
 }
 
-// Update writes svc back into the Kubernetes cluster. If successful,
-// the updated Service is returned. Note that changes to svc.Status
-// are not propagated, for that you need to call UpdateStatus.
-func (c *Client) Update(svc *v1.Service) (*v1.Service, error) {
-	return c.client.CoreV1().Services(svc.Namespace).Update(svc)
-}
-
 // UpdateStatus writes the protected "status" field of svc back into
 // the Kubernetes cluster.
 func (c *Client) UpdateStatus(svc *v1.Service) error {
@@ -349,78 +205,7 @@ func (c *Client) sync(key interface{}) SyncState {
 		if !exists {
 			return c.serviceChanged(l, string(k), nil, nil)
 		}
-
-		var eps *v1.Endpoints
-		if c.epIndexer != nil {
-			epsIntf, exists, err := c.epIndexer.GetByKey(string(k))
-			if err != nil {
-				l.Log("op", "getEndpoints", "error", err, "msg", "failed to get endpoints")
-				return SyncStateError
-			}
-			if !exists {
-				return c.serviceChanged(l, string(k), nil, nil)
-			}
-			eps = epsIntf.(*v1.Endpoints)
-		}
-
-		return c.serviceChanged(l, string(k), svc.(*v1.Service), eps)
-
-	case cmKey:
-		l := log.With(c.logger, "configmap", string(k))
-		cmi, exists, err := c.cmIndexer.GetByKey(string(k))
-		if err != nil {
-			l.Log("op", "getConfigMap", "error", err, "msg", "failed to get configmap")
-			return SyncStateError
-		}
-		if !exists {
-			configStale.Set(1)
-			return c.configChanged(l, nil)
-		}
-
-		// Note that configs that we can read, but that fail parsing
-		// or validation, result in a "synced" state, because the
-		// config is not going to parse any better until the k8s
-		// object changes to fix the issue.
-		cm := cmi.(*v1.ConfigMap)
-		cfg, err := config.Parse([]byte(cm.Data["config"]))
-		if err != nil {
-			l.Log("event", "configStale", "error", err, "msg", "config (re)load failed, config marked stale")
-			configStale.Set(1)
-			return SyncStateSuccess
-		}
-
-		st := c.configChanged(l, cfg)
-		if st == SyncStateError {
-			l.Log("event", "configStale", "error", err, "msg", "config (re)load failed, config marked stale")
-			configStale.Set(1)
-			return SyncStateSuccess
-		}
-
-		configLoaded.Set(1)
-		configStale.Set(0)
-
-		l.Log("event", "configLoaded", "msg", "config (re)loaded")
-		return st
-
-	case nodeKey:
-		l := log.With(c.logger, "node", string(k))
-		n, exists, err := c.nodeIndexer.GetByKey(string(k))
-		if err != nil {
-			l.Log("op", "getNode", "error", err, "msg", "failed to get node")
-			return SyncStateError
-		}
-		if !exists {
-			l.Log("op", "getNode", "error", "node doesn't exist in k8s, but I'm running on it!")
-			return SyncStateError
-		}
-		node := n.(*v1.Node)
-		return c.nodeChanged(c.logger, node)
-
-	case synced:
-		if c.synced != nil {
-			c.synced(c.logger)
-		}
-		return SyncStateSuccess
+		return c.serviceChanged(l, string(k), svc.(*v1.Service), nil)
 
 	default:
 		panic(fmt.Errorf("unknown key type for %#v (%T)", key, key))
