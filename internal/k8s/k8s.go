@@ -14,6 +14,7 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
@@ -58,6 +59,7 @@ type Config struct {
 	MetricsHost   string
 	MetricsPort   int
 	Logger        log.Logger
+	Kubeconfig    string
 
 	ServiceChanged func(log.Logger, string, *v1.Service, *v1.Endpoints) SyncState
 }
@@ -69,7 +71,19 @@ type svcKey string
 // The client uses processName to identify itself to the cluster
 // (e.g. when logging events).
 func New(cfg *Config) (*Client, error) {
-	k8sConfig, err := rest.InClusterConfig()
+	var (
+		k8sConfig *rest.Config
+		err error
+	)
+
+	if cfg.Kubeconfig == "" {
+		// if the user didn't provide a config file, assume that we're
+		// running inside k8s
+		k8sConfig, err = rest.InClusterConfig()
+	} else {
+		// the user provided a config file, so use that
+		k8sConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("building client config: %s", err)
 	}

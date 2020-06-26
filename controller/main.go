@@ -73,6 +73,7 @@ func main() {
 
 	var (
 		port   = flag.Int("port", 7472, "HTTP listening port for Prometheus metrics")
+		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	)
 	flag.Parse()
 
@@ -84,6 +85,7 @@ func main() {
 		ProcessName:   "metallb-controller",
 		MetricsPort:   *port,
 		Logger:        logger,
+		Kubeconfig:    *kubeconfig,
 
 		ServiceChanged: c.SetBalancer,
 	})
